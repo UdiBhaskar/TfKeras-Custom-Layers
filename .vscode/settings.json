@@ -1,0 +1,6 @@
+{
+    "python.pythonPath": "C:\\Users\\APPLIED AI\\AppData\\Local\\Continuum\\anaconda3\\python.exe",
+    "python.linting.pylintEnabled": true,
+    "python.linting.enabled": true,
+    "python.linting.pylintArgs": ["--ignored-modules=tensorflow.keras"]
+}
