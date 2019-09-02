@@ -39,7 +39,7 @@ class BahdanauAttention(Layer):
     def __init__(self, units,
                  probability_fn='softmax',
                  dropout_rate=0,
-                 return_aweights=True,
+                 return_aweights=False,
                  weights_initializer='he_normal',
                  bias_initializer='zeros',
                  weights_constraint=None,
@@ -106,7 +106,7 @@ class BahdanauAttention(Layer):
         score = tf.squeeze(score, [2])
 
         if mask is not None:
-            score = score + (mask*-1e9)
+            score = score + (tf.cast(mask, score.dtype)*-1e9)
 
         # attention_weights shape == (batch_size, max_length)
         attention_weights = self.probability_fn(score, axis=-1)
@@ -117,10 +117,10 @@ class BahdanauAttention(Layer):
             attention_weights = tf.nn.dropout(attention_weights, rate=self.dropout_rate)
 
         #context_vector shape (batch_size, hidden_size)
-        context_vector = tf.tensordot(attention_weights, enc_out, axes=2)
+        context_vector = tf.tensordot(attention_weights, enc_out, axes=2, name='context_vector')
 
         if self.return_aweights:
-            return context_vector, tf.squeeze(attention_weights, 2)
+            return context_vector, tf.squeeze(attention_weights, 2, name='attention_weights')
         return context_vector
 
     def compute_output_shape(self, input_shape):
