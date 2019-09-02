@@ -72,7 +72,7 @@ class BahdanauAttention(Layer):
             kernel_initializer=self.weights_initializer, bias_initializer=self.bias_initializer,\
                 kernel_constraint=self.weights_constraint, bias_constraint=self.bias_constraint,\
                     name=self.name+"Ua")
-        self._va = layers.Dense(1, kernel_initializer=self.weights_initializer,\
+        self._va = layers.Dense(1, use_bias=False, kernel_initializer=self.weights_initializer,\
             bias_initializer=self.bias_initializer, kernel_constraint=self.weights_constraint,\
                 bias_constraint=self.bias_constraint, name=self.name+"Va")
         self.supports_masking = True
@@ -110,6 +110,8 @@ class BahdanauAttention(Layer):
             tf.cast(inputs['decoderHt'], tf.float32)
         if mask_dec is not None:
             dec_prev_hs = dec_prev_hs * tf.cast(mask_dec, dec_prev_hs.dtype)
+        if mask_enc is not None:
+            enc_out = enc_out * tf.cast(tf.expand_dims(mask_enc, 2), enc_out.dtype)
 
         # decprev_hs - Decoder hidden shape == (batch_size, hidden size)
         # hidden_with_time_axis shape == (batch_size, 1, hidden size)
@@ -152,14 +154,14 @@ class BahdanauAttention(Layer):
         return output_shape
 
 
-class LuongeAttention:
+class LuongeAttention(Layer):
     '''
     LuongeAttention
     Implemented based on below paper
     https://arxiv.org/pdf/1508.04025.pdf
     '''
     def __init__(self, units,
-                 attention_type,
+                 attention_type='dot',
                  probability_fn='softmax',
                  dropout_rate=0,
                  return_aweights=False,
@@ -183,4 +185,97 @@ class LuongeAttention:
         self.bias_initializer = bias_initializer
         self.weights_constraint = weights_constraint
         self.bias_constraint = bias_constraint
-        
+
+        if self.attention_type == 'general':
+            self._wa = layers.Dense(self.units, use_bias=False,\
+                kernel_initializer=self.weights_initializer,\
+                    bias_initializer=self.bias_initializer,\
+                        kernel_constraint=self.weights_constraint,\
+                            bias_constraint=self.bias_constraint,\
+                                name=self.name+"Wa")
+        elif self.attention_type == 'concat':
+            self._wa = layers.Dense(self.units, use_bias=False,\
+                kernel_initializer=self.weights_initializer,\
+                    bias_initializer=self.bias_initializer,\
+                        kernel_constraint=self.weights_constraint,\
+                            bias_constraint=self.bias_constraint,\
+                                name=self.name+"Wa")
+            self._va = layers.Dense(1, use_bias=False, kernel_initializer=self.weights_initializer,\
+                bias_initializer=self.bias_initializer, kernel_constraint=self.weights_constraint,\
+                    bias_constraint=self.bias_constraint, name=self.name+"Va")
+        self.supports_masking = True
+
+
+    def build(self, input_shape):
+        '''build'''
+        assert isinstance(input_shape, dict)
+
+        shape_en, shape_dc = input_shape['enocderHs'], input_shape['decoderHt']
+
+        assert len(shape_en) == 3, "Encoder Hiddenstates/output should be 3 dim \
+        ( B x T x H ), but got {} dim".format(len(shape_en))
+
+        assert len(shape_dc) == 2, "Decoder Hidden/output should be 2 \
+        dim (B x H), but got {} dim".format(len(shape_dc))
+
+        self.built = True # pylint: disable=W0201
+
+
+    def call(self, inputs, mask=None):
+        '''call'''
+        assert isinstance(inputs, dict)
+
+        if ('enocderHs' not in inputs.keys())or ('decoderHt' not in inputs.keys()):
+            raise ValueError("Input to the layer must be a dict with \
+            keys=['enocderHs','decoderHt']")
+        if isinstance(mask, dict):
+            mask_enc = mask.get('enocderHs', None)
+            mask_dec = mask.get('decoderHt', None)
+        else:
+            mask_enc = mask
+            mask_dec = None
+
+        enc_out, dec_ht = tf.cast(inputs['enocderHs'], tf.float32), \
+            tf.cast(inputs['decoderHt'], tf.float32)
+
+        if mask_dec is not None:
+            dec_ht = dec_ht * tf.cast(mask_dec, dec_ht.dtype)
+        if mask_enc is not None:
+            enc_out = enc_out * tf.cast(tf.expand_dims(mask_enc, 2), enc_out.dtype)
+
+        dec_ht_with_tax = tf.expand_dims(dec_ht, 1)
+
+        #score shape (batch_size, max_length)
+        if self.attention_type == 'dot':
+            score = tf.matmul(dec_ht_with_tax, enc_out, transpose_b=True)
+            score = tf.squeeze(score, 1)
+        elif self.attention_type == 'general':
+            score = self._wa(enc_out)
+            score = tf.matmul(dec_ht_with_tax, score, transpose_b=True)
+            score = tf.squeeze(score, 1)
+        elif self.attention_type == 'concat':
+            dec_ht_with_tax = tf.tile(dec_ht_with_tax, [1, enc_out.shape[1], 1])
+            score = self._va(self._wa(tf.concat((dec_ht_with_tax, enc_out), axis=-1)))
+            score = tf.squeeze(score, 2)
+
+        if self.scaling_factor is not None:
+            score = score/tf.sqrt(self.scaling_factor)
+
+        if mask_enc is not None:
+            score = score + (tf.cast(mask_enc, score.dtype)*-1e9)
+
+        # attention_weights shape == (batch_size, max_length)
+        attention_weights = self.probability_fn(score, axis=-1)
+        #(batch_size, 1, max_length)
+        attention_weights = tf.expand_dims(attention_weights, 1)
+
+        if self.dropout_rate != 0:
+            attention_weights = tf.nn.dropout(attention_weights, rate=self.dropout_rate)
+
+        #context_vector shape (batch_size, hidden_size)
+        context_vector = tf.matmul(attention_weights, enc_out)
+        context_vector = tf.squeeze(context_vector, 1, name="context_vector")
+
+        if self.return_aweights:
+            return context_vector, tf.squeeze(attention_weights, 1, name='attention_weights')
+        return context_vector
