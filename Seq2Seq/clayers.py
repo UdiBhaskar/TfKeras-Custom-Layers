@@ -4,6 +4,28 @@ from tensorflow.keras import layers
 from tensorflow.keras.layers import Layer
 from .cactivations import get as cget
 
+def _attention_score(dec_ht,
+                     enc_hs,
+                     attention_type,
+                     weightwa=None,
+                     weightua=None,
+                     weightva=None):
+    if attention_type == 'bahdanau':
+        score = weightva(tf.nn.tanh(weightwa(dec_ht) + weightua(enc_hs)))
+        score = tf.squeeze(score, [2])
+    elif attention_type == 'dot':
+        score = tf.matmul(dec_ht, enc_hs, transpose_b=True)
+        score = tf.squeeze(score, 1)
+    elif attention_type == 'general':
+        score = weightwa(enc_hs)
+        score = tf.matmul(dec_ht, score, transpose_b=True)
+        score = tf.squeeze(score, 1)
+    elif attention_type == 'concat':
+        dec_ht = tf.tile(dec_ht, [1, enc_hs.shape[1], 1])
+        score = weightva(tf.nn.tanh(weightwa(tf.concat((dec_ht, enc_hs), axis=-1))))
+        score = tf.squeeze(score, 2)
+    return score
+
 
 class BahdanauAttention(Layer):
     '''
@@ -118,8 +140,9 @@ class BahdanauAttention(Layer):
         dec_hidden_with_time_axis = tf.expand_dims(dec_prev_hs, 1)
 
         # score shape == (batch_size, max_length)
-        score = self._va(tf.nn.tanh(self._wa(dec_hidden_with_time_axis) + self._ua(enc_out)))
-        score = tf.squeeze(score, [2])
+        score = _attention_score(dec_ht=dec_hidden_with_time_axis, enc_hs=enc_out,\
+                    attention_type='bahdanau', weightwa=self._wa,\
+                        weightua=self._ua, weightva=self._va)
 
         if self.scaling_factor is not None:
             score = score/tf.sqrt(self.scaling_factor)
@@ -159,6 +182,35 @@ class LuongeAttention(Layer):
     LuongeAttention
     Implemented based on below paper
     https://arxiv.org/pdf/1508.04025.pdf
+    # Arguments
+        units = number of hidden units to use.
+        attention_type = Type of attention, it takes any of 'dot', 'general', 'concat'
+        probability_fn = probability function to get probabilities(weights for attention)
+                         You can use 'softmax' or 'hardmax' or 'sparsemax' or any custom
+                         function which takes input distribution and returns probability dist.
+        dropout_rate = dropout for attention weights (between 0 and 1, 0 - no dropout).
+        return_aweights = Bool, whether to return attention weights or not.
+        scaling_factor = int/float to scale the score vector. default None=1
+        weights_initializer = initializer for weight matrix
+        bias_initializer = initializer for bias values
+        weights_constraint = Constraint function applied to the weights
+        bias_constraint = Constraint function applied to the bias
+    # Returns
+        context_vector = context vector after applying attention.
+        attention_weights = attention weights only if `return_aweights=True`.
+
+    # Inputs to the layer
+        inputs = dictionary with keys "enocderHs", "decoderHt".
+                enocderHs = all the encoder hidden states,
+                            shape - (Batchsize, encoder_seq_len, enc_hidden_size)
+                 decoderHt = hidden state of decoder at that timestep,
+                            shape - (Batchsize, dec_hidden_size)
+        mask = You can apply mask for padded values or any custom values
+               while calculating attention.
+               if you are giving mask for encoder and deocoder then you have
+               to give a dict similar to inputs. (keys: enocderHs, decoderHt)
+               else you can give only for enocoder normally.(one tensor)
+               mask shape should be (Batchsize, encoder_seq_len)
     '''
     def __init__(self, units,
                  attention_type='dot',
@@ -247,16 +299,14 @@ class LuongeAttention(Layer):
 
         #score shape (batch_size, max_length)
         if self.attention_type == 'dot':
-            score = tf.matmul(dec_ht_with_tax, enc_out, transpose_b=True)
-            score = tf.squeeze(score, 1)
+            score = _attention_score(dec_ht=dec_ht_with_tax, enc_hs=enc_out,\
+                        attention_type='dot')
         elif self.attention_type == 'general':
-            score = self._wa(enc_out)
-            score = tf.matmul(dec_ht_with_tax, score, transpose_b=True)
-            score = tf.squeeze(score, 1)
+            score = _attention_score(dec_ht=dec_ht_with_tax, enc_hs=enc_out,\
+                        attention_type='general', weightwa=self._wa)
         elif self.attention_type == 'concat':
-            dec_ht_with_tax = tf.tile(dec_ht_with_tax, [1, enc_out.shape[1], 1])
-            score = self._va(self._wa(tf.concat((dec_ht_with_tax, enc_out), axis=-1)))
-            score = tf.squeeze(score, 2)
+            score = _attention_score(dec_ht=dec_ht_with_tax, enc_hs=enc_out,\
+                    attention_type='concat', weightwa=self._wa, weightva=self._va)
 
         if self.scaling_factor is not None:
             score = score/tf.sqrt(self.scaling_factor)
@@ -279,3 +329,13 @@ class LuongeAttention(Layer):
         if self.return_aweights:
             return context_vector, tf.squeeze(attention_weights, 1, name='attention_weights')
         return context_vector
+
+    def compute_output_shape(self, input_shape):
+        '''compute output shape'''
+        assert isinstance(input_shape, dict)
+        shape_en = input_shape['enocderHs']
+        if self.return_aweights:
+            output_shape = [(shape_en[0], shape_en[2]), (shape_en[0], shape_en[1])]
+            return output_shape
+        output_shape = shape_en[0], shape_en[2]
+        return output_shape
