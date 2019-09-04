@@ -2,7 +2,9 @@
 import tensorflow as tf
 from tensorflow.keras import layers
 from tensorflow.keras.layers import Layer
+from tensorflow.keras import initializers, regularizers, constraints
 from .cactivations import get as cget
+from .cactivations import serialize
 
 def _attention_score(dec_ht,
                      enc_hs,
@@ -43,6 +45,8 @@ class BahdanauAttention(Layer):
         scaling_factor = int/float to scale the score vector. default None=1
         weights_initializer = initializer for weight matrix
         bias_initializer = initializer for bias values
+        weights_regularizer = Regularize the weights (U, W, V)
+        bias_regularizer = Regularize the bias (b)
         weights_constraint = Constraint function applied to the weights
         bias_constraint = Constraint function applied to the bias
     # Returns
@@ -69,6 +73,8 @@ class BahdanauAttention(Layer):
                  scaling_factor=None,
                  weights_initializer='he_normal',
                  bias_initializer='zeros',
+                 weights_regularizer=None,
+                 bias_regularizer=None,
                  weights_constraint=None,
                  bias_constraint=None,
                  **kwargs):
@@ -82,21 +88,26 @@ class BahdanauAttention(Layer):
         self.return_aweights = return_aweights
         self.scaling_factor = scaling_factor
         self.probability_fn = cget(probability_fn)
-        self.weights_initializer = weights_initializer
-        self.bias_initializer = bias_initializer
-        self.weights_constraint = weights_constraint
-        self.bias_constraint = bias_constraint
+        self.weights_initializer = initializers.get(weights_initializer)
+        self.bias_initializer = initializers.get(bias_initializer)
+        self.weights_regularizer = regularizers.get(weights_regularizer)
+        self.bias_regularizer = regularizers.get(bias_regularizer)
+        self.weights_constraint = constraints.get(weights_constraint)
+        self.bias_constraint = constraints.get(bias_constraint)
         self._wa = layers.Dense(self.units, use_bias=False,\
-            kernel_initializer=self.weights_initializer, bias_initializer=self.bias_initializer,\
-                kernel_constraint=self.weights_constraint, bias_constraint=self.bias_constraint,\
-                    name=self.name+"Wa")
+            kernel_initializer=weights_initializer, bias_initializer=bias_initializer,\
+                kernel_regularizer=weights_regularizer, bias_regularizer=bias_regularizer,\
+                    kernel_constraint=weights_constraint, bias_constraint=bias_constraint,\
+                        name=self.name+"Wa")
         self._ua = layers.Dense(self.units,\
-            kernel_initializer=self.weights_initializer, bias_initializer=self.bias_initializer,\
-                kernel_constraint=self.weights_constraint, bias_constraint=self.bias_constraint,\
-                    name=self.name+"Ua")
-        self._va = layers.Dense(1, use_bias=False, kernel_initializer=self.weights_initializer,\
-            bias_initializer=self.bias_initializer, kernel_constraint=self.weights_constraint,\
-                bias_constraint=self.bias_constraint, name=self.name+"Va")
+            kernel_initializer=weights_initializer, bias_initializer=bias_initializer,\
+                kernel_regularizer=weights_regularizer, bias_regularizer=bias_regularizer,\
+                    kernel_constraint=weights_constraint, bias_constraint=bias_constraint,\
+                        name=self.name+"Ua")
+        self._va = layers.Dense(1, use_bias=False, kernel_initializer=weights_initializer,\
+            kernel_regularizer=weights_regularizer, bias_regularizer=bias_regularizer,\
+                bias_initializer=bias_initializer, kernel_constraint=weights_constraint,\
+                    bias_constraint=bias_constraint, name=self.name+"Va")
         self.supports_masking = True
 
 
@@ -176,6 +187,22 @@ class BahdanauAttention(Layer):
         output_shape = shape_en[0], shape_en[2]
         return output_shape
 
+    def get_config(self):
+        '''Config'''
+        config = {'units': self.units,
+                  'probability_fn': serialize(self.probability_fn),
+                  'dropout_rate' : self.dropout_rate,
+                  'return_aweights' : self.return_aweights,
+                  'scaling_factor' : self.scaling_factor,
+                  'weights_initializer' : initializers.serialize(self.weights_initializer),
+                  'bias_initializer' : initializers.serialize(self.bias_initializer),
+                  'weights_regularizer' : regularizers.serialize(self.weights_regularizer),
+                  'bias_regularizer' : regularizers.serialize(self.bias_regularizer),
+                  'weights_constraint' : constraints.serialize(self.weights_constraint),
+                  'bias_constraint': constraints.serialize(self.bias_constraint)}
+        base_config = super(BahdanauAttention, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
 
 class LuongeAttention(Layer):
     '''
@@ -192,9 +219,8 @@ class LuongeAttention(Layer):
         return_aweights = Bool, whether to return attention weights or not.
         scaling_factor = int/float to scale the score vector. default None=1
         weights_initializer = initializer for weight matrix
-        bias_initializer = initializer for bias values
+        weights_regularizer = Regularize the weights (W, V)
         weights_constraint = Constraint function applied to the weights
-        bias_constraint = Constraint function applied to the bias
     # Returns
         context_vector = context vector after applying attention.
         attention_weights = attention weights only if `return_aweights=True`.
@@ -219,9 +245,8 @@ class LuongeAttention(Layer):
                  return_aweights=False,
                  scaling_factor=None,
                  weights_initializer='he_normal',
-                 bias_initializer='zeros',
-                 weights_constraint=None,
-                 bias_constraint=None, **kwargs):
+                 weights_regularizer=None,
+                 weights_constraint=None, **kwargs):
 
         if 'name' not in kwargs:
             kwargs['name'] = ""
@@ -233,28 +258,23 @@ class LuongeAttention(Layer):
         self.dropout_rate = dropout_rate
         self.return_aweights = return_aweights
         self.scaling_factor = scaling_factor
-        self.weights_initializer = weights_initializer
-        self.bias_initializer = bias_initializer
-        self.weights_constraint = weights_constraint
-        self.bias_constraint = bias_constraint
+        self.weights_initializer = initializers.get(weights_initializer)
+        self.weights_regularizer = regularizers.get(weights_regularizer)
+        self.weights_constraint = constraints.get(weights_constraint)
 
         if self.attention_type == 'general':
             self._wa = layers.Dense(self.units, use_bias=False,\
-                kernel_initializer=self.weights_initializer,\
-                    bias_initializer=self.bias_initializer,\
-                        kernel_constraint=self.weights_constraint,\
-                            bias_constraint=self.bias_constraint,\
-                                name=self.name+"Wa")
+                kernel_initializer=weights_initializer, kernel_regularizer=weights_regularizer,\
+                    kernel_constraint=weights_constraint,\
+                        name=self.name+"Wa")
         elif self.attention_type == 'concat':
             self._wa = layers.Dense(self.units, use_bias=False,\
-                kernel_initializer=self.weights_initializer,\
-                    bias_initializer=self.bias_initializer,\
-                        kernel_constraint=self.weights_constraint,\
-                            bias_constraint=self.bias_constraint,\
-                                name=self.name+"Wa")
+                kernel_initializer=weights_initializer, kernel_regularizer=weights_regularizer,\
+                    kernel_constraint=weights_constraint,\
+                        name=self.name+"Wa")
             self._va = layers.Dense(1, use_bias=False, kernel_initializer=self.weights_initializer,\
-                bias_initializer=self.bias_initializer, kernel_constraint=self.weights_constraint,\
-                    bias_constraint=self.bias_constraint, name=self.name+"Va")
+                kernel_regularizer=weights_regularizer, kernel_constraint=self.weights_constraint,\
+                    name=self.name+"Va")
         self.supports_masking = True
 
 
@@ -339,3 +359,17 @@ class LuongeAttention(Layer):
             return output_shape
         output_shape = shape_en[0], shape_en[2]
         return output_shape
+
+    def get_config(self):
+        '''Config'''
+        config = {'units': self.units,
+                  'attention_type': self.attention_type,
+                  'probability_fn': serialize(self.probability_fn),
+                  'dropout_rate' : self.dropout_rate,
+                  'return_aweights' : self.return_aweights,
+                  'scaling_factor' : self.scaling_factor,
+                  'weights_initializer' : initializers.serialize(self.weights_initializer),
+                  'weights_regularizer' : regularizers.serialize(self.weights_regularizer),
+                  'weights_constraint' : constraints.serialize(self.weights_constraint)}
+        base_config = super(LuongeAttention, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
