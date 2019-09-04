@@ -117,7 +117,7 @@ class BahdanauAttention(Layer):
 
         shape_en, shape_dc = input_shape['enocderHs'], input_shape['decoderHt']
 
-        assert len(shape_en) == 3, "Encoder Hiddenstates/output should be 3 dim \
+        assert len(shape_en) > 3, "Encoder Hiddenstates/output should be 3 dim or more \
         ( B x T x H ), but got {} dim".format(len(shape_en))
 
         assert len(shape_dc) == 2, "Decoder Hidden/output should be 2 \
@@ -237,6 +237,8 @@ class LuongeAttention(Layer):
                to give a dict similar to inputs. (keys: enocderHs, decoderHt)
                else you can give only for enocoder normally.(one tensor)
                mask shape should be (Batchsize, encoder_seq_len)
+    # Raises:
+        ValueError: if attention type is not one of 'dot', 'general', 'concat'.
     '''
     def __init__(self, units,
                  attention_type='dot',
@@ -327,6 +329,8 @@ class LuongeAttention(Layer):
         elif self.attention_type == 'concat':
             score = _attention_score(dec_ht=dec_ht_with_tax, enc_hs=enc_out,\
                     attention_type='concat', weightwa=self._wa, weightva=self._va)
+        else:
+            raise ValueError("mode must be 'dot', 'general', or 'concat'.")
 
         if self.scaling_factor is not None:
             score = score/tf.sqrt(self.scaling_factor)
@@ -373,3 +377,63 @@ class LuongeAttention(Layer):
                   'weights_constraint' : constraints.serialize(self.weights_constraint)}
         base_config = super(LuongeAttention, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))
+
+def _monotonic_attetion(probabilities, attention_prev, mode):
+
+    """Compute monotonic attention distribution from choosing probabilities.
+
+    Implemented Based on -
+    https://colinraffel.com/blog/online-and-linear-time-attention-by-enforcing-monotonic-alignments.html
+    https://arxiv.org/pdf/1704.00784.pdf
+    Mainly implemented by referring
+    https://github.com/craffel/mad/blob/b3687a70615044359c8acc440e43a5e23dc58309/example_decoder.py#L22
+
+    # Arguments:
+        probabilities: Probability of choosing input sequence..
+                       Should be of shape (batch_size, max_length),
+                       and should all be in the range [0, 1].
+        previous_attention: The attention distribution from the previous output timestep.
+                            Should be of shape (batch_size, max_length).
+                            For the first output timestep,
+                            should be [1, 0, 0, ...,0] for all n in [0, ... batch_size - 1].
+        mode: How to compute the attention distribution.
+              Must be one of 'recursive', 'parallel', or 'hard'.
+
+              - 'recursive' uses tf.scan to recursively compute the distribution.
+              This is slowest but is exact, general, and does not suffer from
+              numerical instabilities.
+
+              - 'parallel' uses parallelized cumulative-sum and cumulative-product
+              operations to compute a closed-form solution to the recurrence relation
+              defining the attention distribution.  This makes it more efficient than 'recursive',
+              but it requires numerical checks which make the distribution non-exact.
+              This can be a problem in particular when max_length is long and/or
+              probabilities has entries very close to 0 or 1.
+
+              - 'hard' requires that the probabilities in p_choose_i are all either 0 or 1,
+              and subsequently uses a more efficient and exact solution.
+    # Returns: A tensor of shape (batch_size, max_length) representing the attention distributions
+               for each sequence in the batch.
+
+    # Raises:
+             ValueError: if mode is not one of 'recursive', 'parallel', 'hard'."""
+    if mode == 'hard':
+        #Remove any probabilities before the index chosen last time step
+        probabilities = probabilities*tf.cumsum(attention_prev, axis=1)
+        attention = probabilities*tf.cumprod(1-probabilities, axis=1, exclusive=True)
+    elif mode == 'recursive':
+        batch_size = tf.shape(probabilities)[0]
+        shifted_1mp_probabilities = tf.concat([tf.ones((batch_size, 1)),\
+            1 - probabilities[:, :-1]], 1)
+        attention = probabilities*tf.transpose(tf.scan(lambda x, yz: tf.reshape(yz[0]*x + yz[1],\
+            (batch_size,)), [tf.transpose(shifted_1mp_probabilities),\
+                tf.transpose(attention_prev)], tf.zeros((batch_size,))))
+    elif mode == 'parallel':
+        cumprod_1mp_probabilities = tf.exp(tf.cumsum(tf.log(tf.clip_by_value(1-probabilities,\
+            1e-10, 1)), axis=1, exclusive=True))
+        attention = probabilities*cumprod_1mp_probabilities*tf.cumsum(attention_prev/\
+            tf.clip_by_value(cumprod_1mp_probabilities, 1e-10, 1.), axis=1)
+    else:
+        raise ValueError("Mode must be 'hard', 'parallel' or 'recursive' ")
+
+    return attention
