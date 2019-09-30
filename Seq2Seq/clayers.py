@@ -21,7 +21,7 @@ def _attention_score(dec_ht,
     elif attention_type == 'general':
         score = weightwa(enc_hs)
         score = tf.matmul(dec_ht, score, transpose_b=True)
-        score = tf.squeeze(score, 1)
+        score = tf.squeeze(score, 1)    
     elif attention_type == 'concat':
         dec_ht = tf.tile(dec_ht, [1, enc_hs.shape[1], 1])
         score = weightva(tf.nn.tanh(weightwa(tf.concat((dec_ht, enc_hs), axis=-1))))
@@ -117,7 +117,7 @@ class BahdanauAttention(Layer):
 
         shape_en, shape_dc = input_shape['enocderHs'], input_shape['decoderHt']
 
-        assert len(shape_en) > 3, "Encoder Hiddenstates/output should be 3 dim or more \
+        assert len(shape_en) >= 3, "Encoder Hiddenstates/output should be 3 dim or more \
         ( B x T x H ), but got {} dim".format(len(shape_en))
 
         assert len(shape_dc) == 2, "Decoder Hidden/output should be 2 \
@@ -159,7 +159,7 @@ class BahdanauAttention(Layer):
             score = score/tf.sqrt(self.scaling_factor)
 
         if mask_enc is not None:
-            score = score + (tf.cast(mask_enc, score.dtype)*-1e9)
+            score = score + (tf.cast(tf.math.equal(mask_enc, False), score.dtype)*-1e9)
 
         # attention_weights shape == (batch_size, max_length)
         attention_weights = self.probability_fn(score, axis=-1)
@@ -286,7 +286,7 @@ class LuongeAttention(Layer):
 
         shape_en, shape_dc = input_shape['enocderHs'], input_shape['decoderHt']
 
-        assert len(shape_en) == 3, "Encoder Hiddenstates/output should be 3 dim \
+        assert len(shape_en) >= 3, "Encoder Hiddenstates/output should be 3 dim \
         ( B x T x H ), but got {} dim".format(len(shape_en))
 
         assert len(shape_dc) == 2, "Decoder Hidden/output should be 2 \
@@ -336,7 +336,7 @@ class LuongeAttention(Layer):
             score = score/tf.sqrt(self.scaling_factor)
 
         if mask_enc is not None:
-            score = score + (tf.cast(mask_enc, score.dtype)*-1e9)
+            score = score + (tf.cast(tf.math.equal(mask_enc, False), score.dtype)*-1e9)
 
         # attention_weights shape == (batch_size, max_length)
         attention_weights = self.probability_fn(score, axis=-1)
@@ -410,7 +410,7 @@ def _monotonic_attetion(probabilities, attention_prev, mode):
               This can be a problem in particular when max_length is long and/or
               probabilities has entries very close to 0 or 1.
 
-              - 'hard' requires that the probabilities in p_choose_i are all either 0 or 1,
+              - 'hard' requires that  the probabilities in p_choose_i are all either 0 or 1,
               and subsequently uses a more efficient and exact solution.
     # Returns: A tensor of shape (batch_size, max_length) representing the attention distributions
                for each sequence in the batch.
@@ -429,7 +429,7 @@ def _monotonic_attetion(probabilities, attention_prev, mode):
             (batch_size,)), [tf.transpose(shifted_1mp_probabilities),\
                 tf.transpose(attention_prev)], tf.zeros((batch_size,))))
     elif mode == 'parallel':
-        cumprod_1mp_probabilities = tf.exp(tf.cumsum(tf.log(tf.clip_by_value(1-probabilities,\
+        cumprod_1mp_probabilities = tf.exp(tf.cumsum(tf.math.log(tf.clip_by_value(1-probabilities,\
             1e-10, 1)), axis=1, exclusive=True))
         attention = probabilities*cumprod_1mp_probabilities*tf.cumsum(attention_prev/\
             tf.clip_by_value(cumprod_1mp_probabilities, 1e-10, 1.), axis=1)
@@ -437,3 +437,120 @@ def _monotonic_attetion(probabilities, attention_prev, mode):
         raise ValueError("Mode must be 'hard', 'parallel' or 'recursive' ")
 
     return attention
+
+class MonotonicBahdanauAttention(Layer):
+    '''
+    MonotonicBahdanauAttention
+    '''
+    def __init__(self, units,
+                 mode='parallel',
+                 return_aweights=False,
+                 scaling_factor=None,
+                 noise_std=0,
+                 weights_initializer='he_normal',
+                 bias_initializer='zeros',
+                 weights_regularizer=None,
+                 bias_regularizer=None,
+                 weights_constraint=None,
+                 bias_constraint=None,
+                 **kwargs):
+        if 'name' not in kwargs:
+            kwargs['name'] = ""
+        super(MonotonicBahdanauAttention, self).__init__(**kwargs)
+        self.units = units
+        self.mode = mode
+        self.return_aweights = return_aweights
+        self.scaling_factor = scaling_factor
+        self.noise_std = noise_std
+        self.weights_initializer = initializers.get(weights_initializer)
+        self.bias_initializer = initializers.get(bias_initializer)
+        self.weights_regularizer = regularizers.get(bias_regularizer)
+        self.bias_regularizer = regularizers.get(bias_regularizer)
+        self.weights_constraint = constraints.get(weights_constraint)
+        self.bias_constraint = constraints.get(bias_constraint)
+        self._wa = layers.Dense(self.units, use_bias=False,\
+            kernel_initializer=weights_initializer, bias_initializer=bias_initializer,\
+                kernel_regularizer=weights_regularizer, bias_regularizer=bias_regularizer,\
+                    kernel_constraint=weights_constraint, bias_constraint=bias_constraint,\
+                        name=self.name+"Wa")
+        self._ua = layers.Dense(self.units,\
+            kernel_initializer=weights_initializer, bias_initializer=bias_initializer,\
+                kernel_regularizer=weights_regularizer, bias_regularizer=bias_regularizer,\
+                    kernel_constraint=weights_constraint, bias_constraint=bias_constraint,\
+                        name=self.name+"Ua")
+        self._va = layers.Dense(1, use_bias=False, kernel_initializer=weights_initializer,\
+            kernel_regularizer=weights_regularizer, bias_regularizer=bias_regularizer,\
+                bias_initializer=bias_initializer, kernel_constraint=weights_constraint,\
+                    bias_constraint=bias_constraint, name=self.name+"Va")
+
+    def build(self, input_shape):
+        '''build'''
+        assert isinstance(input_shape, dict)
+
+        shape_en, shape_dc = input_shape['enocderHs'], input_shape['decoderHt']
+
+        assert len(shape_en) >= 3, "Encoder Hiddenstates/output should be 3 dim or more \
+        ( B x T x H ), but got {} dim".format(len(shape_en))
+
+        assert len(shape_dc) == 2, "Decoder Hidden/output should be 2 \
+        dim (B x H), but got {} dim".format(len(shape_dc))
+
+        self.built = True # pylint: disable=W0201
+
+    def call(self, inputs, mask=None, training=True):
+        '''call'''
+        assert isinstance(inputs, dict)
+
+        if ('enocderHs' not in inputs.keys())or ('decoderHt' not in inputs.keys()\
+            or 'prevAttention' not in inputs.keys()):
+            raise ValueError("Input to the layer must be a dict with \
+            keys=['enocderHs','decoderHt', 'prevAttention']")
+
+        if isinstance(mask, dict):
+            mask_enc = mask.get('enocderHs', None)
+            mask_dec = mask.get('decoderHt', None)
+        else:
+            mask_enc = mask
+            mask_dec = None
+        enc_out, dec_prev_hs = tf.cast(inputs['enocderHs'], tf.float32), \
+            tf.cast(inputs['decoderHt'], tf.float32)
+
+        prev_attention = inputs['prevAttention']
+
+        if mask_dec is not None:
+            dec_prev_hs = dec_prev_hs * tf.cast(mask_dec, dec_prev_hs.dtype)
+        if mask_enc is not None:
+            enc_out = enc_out * tf.cast(tf.expand_dims(mask_enc, 2), enc_out.dtype)
+
+        # decprev_hs - Decoder hidden shape == (batch_size, hidden size)
+        # hidden_with_time_axis shape == (batch_size, 1, hidden size)
+        dec_hidden_with_time_axis = tf.expand_dims(dec_prev_hs, 1)
+
+        # score shape == (batch_size, max_length)
+        score = _attention_score(dec_ht=dec_hidden_with_time_axis, enc_hs=enc_out,\
+                    attention_type='bahdanau', weightwa=self._wa,\
+                        weightua=self._ua, weightva=self._va)
+
+        if self.scaling_factor is not None:
+            score = score/tf.sqrt(self.scaling_factor)
+
+        if training:
+            if self.noise_std > 0:
+                random_noise = tf.random.normal(shape=tf.shape(score), mean=0,\
+                    stddev=self.noise_std, dtype=score.dtype, seed=self.seed)
+                score = score + random_noise
+        if self.mode == 'hard':
+            probabilities = tf.cast(score > 0, score.dtype)
+        else:
+            probabilities = tf.sigmoid(score)
+
+        attention_weights = _monotonic_attetion(probabilities, prev_attention, self.mode)
+        attention_weights = tf.expand_dims(attention_weights, 1)
+
+        #context_vector shape (batch_size, hidden_size)
+        context_vector = tf.matmul(attention_weights, enc_out)
+        context_vector = tf.squeeze(context_vector, 1, name="context_vector")
+
+        if self.return_aweights:
+            return context_vector, tf.squeeze(attention_weights, 1, name='attention_weights')
+        return context_vector
