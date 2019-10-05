@@ -443,7 +443,6 @@ class MonotonicBahdanauAttention(Layer):
     MonotonicBahdanauAttention
     Implemented based on below paper
         https://arxiv.org/pdf/1704.00784.pdf
-        attention_weights = monotonic_prob_fn((Va * tanh(Wa*Ht+Ua*Hs+b))/sqrt(scaling_factor))
     # Arguments
         units = number of hidden units to use.
         mode = How to compute the attention distribution.
@@ -468,11 +467,8 @@ class MonotonicBahdanauAttention(Layer):
                     applying sigmoid function.(pre-sigmoid noise). If it is 0 or
                     mode="hard", we won't add any noise.
         weights_initializer = initializer for weight matrix
-        bias_initializer = initializer for bias values
-        weights_regularizer = Regularize the weights (U, W, V)
-        bias_regularizer = Regularize the bias (b)
+        weights_regularizer = Regularize the weights
         weights_constraint = Constraint function applied to the weights
-        bias_constraint = Constraint function applied to the bias
     # Returns
         context_vector = context vector after applying attention.
         attention_weights = attention weights only if `return_aweights=True`.
@@ -645,6 +641,57 @@ class MonotonicBahdanauAttention(Layer):
 class MonotonicLuongeAttention(Layer):
     '''
     MonotonicLuongeAttention
+    Implemented based on below paper
+        https://arxiv.org/pdf/1704.00784.pdf
+        attention_weights = monotonic_prob_fn((Va * tanh(Wa*Ht+Ua*Hs+b))/sqrt(scaling_factor))
+    # Arguments
+        units = number of hidden units to use.
+        mode = How to compute the attention distribution.
+              Must be one of 'recursive', 'parallel', or 'hard'.
+
+              - 'recursive' uses tf.scan to recursively compute the distribution.
+              This is slowest but is exact, general, and does not suffer from
+              numerical instabilities.
+
+              - 'parallel' uses parallelized cumulative-sum and cumulative-product
+              operations to compute a closed-form solution to the recurrence relation
+              defining the attention distribution.  This makes it more efficient than 'recursive',
+              but it requires numerical checks which make the distribution non-exact.
+              This can be a problem in particular when max_length is long and/or
+              probabilities has entries very close to 0 or 1.
+
+              - 'hard' requires that  the probabilities in p_choose_i are all either 0 or 1,
+              and subsequently uses a more efficient and exact solution.
+        return_aweights = Bool, whether to return attention weights or not.
+        scaling_factor = int/float to scale the score vector. default None=1
+        noise_std = standard deviation of noise which will be added before
+                    applying sigmoid function.(pre-sigmoid noise). If it is 0 or
+                    mode="hard", we won't add any noise.
+        weights_initializer = initializer for weight matrix
+        bias_initializer = initializer for bias values
+        weights_regularizer = Regularize the weights (U, W, V)
+        bias_regularizer = Regularize the bias (b)
+        weights_constraint = Constraint function applied to the weights
+        bias_constraint = Constraint function applied to the bias
+    # Returns
+        context_vector = context vector after applying attention.
+        attention_weights = attention weights only if `return_aweights=True`.
+
+    # Inputs to the layer
+        inputs = dictionary with keys "enocderHs", "decoderHt", "prevAttention".
+                enocderHs = all the encoder hidden states,
+                            shape - (Batchsize, encoder_seq_len, enc_hidden_size)
+                decoderHt = hidden state of decoder at that timestep,
+                            shape - (Batchsize, dec_hidden_size)
+                prevAttention = Previous probability distribution of attention
+                                (previous attention weights)
+        mask = You can apply mask for padded values or any custom values
+               while calculating attention.
+               if you are giving mask for encoder and deocoder then you have
+               to give a dict similar to inputs. (keys: enocderHs, decoderHt)
+               else you can give only for enocoder normally.(one tensor)
+               mask shape should be (Batchsize, encoder_seq_len)
+
     '''
     def __init__(self, units,
                  attention_type='dot',
