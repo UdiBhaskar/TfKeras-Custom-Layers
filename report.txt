@@ -1,0 +1,76 @@
+TensorFlow 2.0 Upgrade Script
+-----------------------------
+Converted 4 files
+Detected 2 issues that require attention
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+File: Seq2Seq/clayers.py
+--------------------------------------------------------------------------------
+Seq2Seq/clayers.py:170:32: ERROR: tf.nn.dropout called without arguments, so automatic fix was disabled. tf.nn.dropout has changed the semantics of the second argument.
+Seq2Seq/clayers.py:347:32: ERROR: tf.nn.dropout called without arguments, so automatic fix was disabled. tf.nn.dropout has changed the semantics of the second argument.
+================================================================================
+Detailed log follows:
+
+================================================================================
+================================================================================
+Input tree: 'Seq2Seq/'
+================================================================================
+--------------------------------------------------------------------------------
+Processing file 'Seq2Seq/cactivations.py'
+ outputting to 'Seq2Seq_v2\\cactivations.py'
+--------------------------------------------------------------------------------
+
+26:16: INFO: Added keywords to args of function 'tf.shape'
+27:21: INFO: Added keywords to args of function 'tf.math.argmax'
+40:13: INFO: Added keywords to args of function 'tf.convert_to_tensor'
+41:19: INFO: Added keywords to args of function 'tf.shape'
+46:14: INFO: Added keywords to args of function 'tf.reduce_sum'
+56:18: INFO: Renamed 'tf.where' to 'tf.compat.v1.where'
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+Processing file 'Seq2Seq/clayers.py'
+ outputting to 'Seq2Seq_v2\\clayers.py'
+--------------------------------------------------------------------------------
+
+170:32: ERROR: tf.nn.dropout called without arguments, so automatic fix was disabled. tf.nn.dropout has changed the semantics of the second argument.
+347:32: ERROR: tf.nn.dropout called without arguments, so automatic fix was disabled. tf.nn.dropout has changed the semantics of the second argument.
+423:34: INFO: Renamed 'tf.cumprod' to 'tf.math.cumprod'
+425:21: INFO: Added keywords to args of function 'tf.shape'
+428:34: INFO: Added keywords to args of function 'tf.transpose'
+429:29: INFO: Added keywords to args of function 'tf.transpose'
+430:16: INFO: Added keywords to args of function 'tf.transpose'
+592:54: INFO: Added keywords to args of function 'tf.shape'
+795:54: INFO: Added keywords to args of function 'tf.shape'
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+Processing file 'Seq2Seq/closses.py'
+ outputting to 'Seq2Seq_v2\\closses.py'
+--------------------------------------------------------------------------------
+
+ERROR: Failed to parse.
+Traceback (most recent call last):
+  File "d:\softwares\anaconda3\envs\dlt2\lib\site-packages\tensorflow_core\tools\compatibility\ast_edits.py", line 916, in update_string_pasta
+    t = pasta.parse(text)
+  File "d:\softwares\anaconda3\envs\dlt2\lib\site-packages\pasta\__init__.py", line 23, in parse
+    t = ast_utils.parse(src)
+  File "d:\softwares\anaconda3\envs\dlt2\lib\site-packages\pasta\base\ast_utils.py", line 56, in parse
+    tree = ast.parse(sanitize_source(src))
+  File "d:\softwares\anaconda3\envs\dlt2\lib\ast.py", line 35, in parse
+    return compile(source, filename, mode, PyCF_ONLY_AST)
+  File "<unknown>", line 5
+    '''sequential cross entropy with masking''''
+                                               ^
+SyntaxError: EOL while scanning string literal
+
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+Processing file 'Seq2Seq/__init__.py'
+ outputting to 'Seq2Seq_v2\\__init__.py'
+--------------------------------------------------------------------------------
+
+
+--------------------------------------------------------------------------------
+

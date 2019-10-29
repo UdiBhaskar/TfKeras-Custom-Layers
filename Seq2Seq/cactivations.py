@@ -23,8 +23,8 @@ def hardmax(inputs, axis=-1):
     # Returns
         Tensor, output of the hardmax transformation
     '''
-    out_shape = tf.shape(inputs)[axis]
-    out = tf.one_hot(tf.math.argmax(inputs, axis), out_shape)
+    out_shape = tf.shape(input=inputs)[axis]
+    out = tf.one_hot(tf.math.argmax(input=inputs, axis=axis), out_shape)
     return out
 
 def sparsemax(inputs):
@@ -37,13 +37,13 @@ def sparsemax(inputs):
         Tensor, output of the sparsemax transformation
     '''
 
-    inputs = tf.convert_to_tensor(inputs, name='logits')
-    shape_inputs = tf.shape(inputs)
+    inputs = tf.convert_to_tensor(value=inputs, name='logits')
+    shape_inputs = tf.shape(input=inputs)
     input_sorted, _ = tf.math.top_k(inputs, k=shape_inputs[1])
     input_cumsum = tf.cumsum(input_sorted, axis=-1)
     k = tf.range(1, tf.cast(shape_inputs[1], inputs.dtype)+1, dtype=inputs.dtype)
     input_check = 1 + k*input_sorted > input_cumsum
-    k_input = tf.reduce_sum(tf.cast(input_check, tf.int32), axis=1)
+    k_input = tf.reduce_sum(input_tensor=tf.cast(input_check, tf.int32), axis=1)
 
     #calculating tau(z)
     k_input_safe = tf.maximum(k_input, 1)
@@ -53,7 +53,7 @@ def sparsemax(inputs):
 
     prob_sparse = tf.maximum(tf.cast(0, inputs.dtype), inputs - tau_input[:, tf.newaxis])
 
-    prob_sparse = tf.where(tf.logical_or(tf.equal(k_input, 0), \
+    prob_sparse = tf.compat.v1.where(tf.logical_or(tf.equal(k_input, 0), \
         tf.math.is_nan(input_cumsum[:, -1])), tf.fill([shape_inputs[0], shape_inputs[1]], \
             tf.cast(float("nan"), inputs.dtype)), prob_sparse)
     return prob_sparse

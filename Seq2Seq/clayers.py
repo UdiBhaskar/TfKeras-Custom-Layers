@@ -124,7 +124,7 @@ class BahdanauAttention(Layer):
         dim (B x H), but got {} dim".format(len(shape_dc))
 
         self.built = True # pylint: disable=W0201
-
+    @tf.function
     def call(self, inputs, mask=None):
         '''call'''
         assert isinstance(inputs, dict)
@@ -158,8 +158,8 @@ class BahdanauAttention(Layer):
         if self.scaling_factor is not None:
             score = score/tf.sqrt(self.scaling_factor)
 
-        if mask_enc is not None:
-            score = score + (tf.cast(tf.math.equal(mask_enc, False), score.dtype)*-1e9)
+        #if mask_enc is not None:
+            #score = score + (tf.cast(tf.math.equal(mask_enc, False), score.dtype)*-1e9)
 
         # attention_weights shape == (batch_size, max_length)
         attention_weights = self.probability_fn(score, axis=-1)
@@ -167,7 +167,7 @@ class BahdanauAttention(Layer):
         attention_weights = tf.expand_dims(attention_weights, 1)
 
         if self.dropout_rate != 0:
-            attention_weights = tf.nn.dropout(attention_weights, rate=self.dropout_rate)
+            attention_weights = tf.nn.dropout(x=attention_weights, rate=self.dropout_rate)
 
         #context_vector shape (batch_size, hidden_size)
         context_vector = tf.matmul(attention_weights, enc_out)
@@ -344,7 +344,7 @@ class LuongeAttention(Layer):
         attention_weights = tf.expand_dims(attention_weights, 1)
 
         if self.dropout_rate != 0:
-            attention_weights = tf.nn.dropout(attention_weights, rate=self.dropout_rate)
+            attention_weights = tf.nn.dropout(x=attention_weights, rate=self.dropout_rate)
 
         #context_vector shape (batch_size, hidden_size)
         context_vector = tf.matmul(attention_weights, enc_out)
@@ -420,14 +420,14 @@ def _monotonic_attetion(probabilities, attention_prev, mode):
     if mode == 'hard':
         #Remove any probabilities before the index chosen last time step
         probabilities = probabilities*tf.cumsum(attention_prev, axis=1)
-        attention = probabilities*tf.cumprod(1-probabilities, axis=1, exclusive=True)
+        attention = probabilities*tf.math.cumprod(1-probabilities, axis=1, exclusive=True)
     elif mode == 'recursive':
-        batch_size = tf.shape(probabilities)[0]
+        batch_size = tf.shape(input=probabilities)[0]
         shifted_1mp_probabilities = tf.concat([tf.ones((batch_size, 1)),\
             1 - probabilities[:, :-1]], 1)
-        attention = probabilities*tf.transpose(tf.scan(lambda x, yz: tf.reshape(yz[0]*x + yz[1],\
-            (batch_size,)), [tf.transpose(shifted_1mp_probabilities),\
-                tf.transpose(attention_prev)], tf.zeros((batch_size,))))
+        attention = probabilities*tf.transpose(a=tf.scan(lambda x, yz: tf.reshape(yz[0]*x + yz[1],\
+            (batch_size,)), [tf.transpose(a=shifted_1mp_probabilities),\
+                tf.transpose(a=attention_prev)], tf.zeros((batch_size,))))
     elif mode == 'parallel':
         cumprod_1mp_probabilities = tf.exp(tf.cumsum(tf.math.log(tf.clip_by_value(1-probabilities,\
             1e-10, 1)), axis=1, exclusive=True))
@@ -589,7 +589,7 @@ class MonotonicBahdanauAttention(Layer):
 
         if training:
             if self.noise_std > 0:
-                random_noise = tf.random.normal(shape=tf.shape(score), mean=0,\
+                random_noise = tf.random.normal(shape=tf.shape(input=score), mean=0,\
                     stddev=self.noise_std, dtype=score.dtype, seed=self.seed)
                 score = score + random_noise
 
@@ -792,7 +792,7 @@ class MonotonicLuongeAttention(Layer):
 
         if training:
             if self.noise_std > 0:
-                random_noise = tf.random.normal(shape=tf.shape(score), mean=0,\
+                random_noise = tf.random.normal(shape=tf.shape(input=score), mean=0,\
                     stddev=self.noise_std, dtype=score.dtype, seed=self.seed)
                 score = score + random_noise
 
