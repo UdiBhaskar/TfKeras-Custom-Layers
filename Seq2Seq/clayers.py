@@ -124,7 +124,6 @@ class BahdanauAttention(Layer):
         dim (B x H), but got {} dim".format(len(shape_dc))
 
         self.built = True # pylint: disable=W0201
-    @tf.function
     def call(self, inputs, mask=None):
         '''call'''
         assert isinstance(inputs, dict)
